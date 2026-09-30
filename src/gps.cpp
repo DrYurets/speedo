@@ -32,6 +32,4 @@ void gpsFill(Telemetry& t) {
 
   bool spdOk = gps.speed.isValid() && gps.speed.age() < 3000;
   t.speedKmh = spdOk ? gps.speed.kmph() : 0;
-
-  if (gps.course.isValid()) t.courseDeg = gps.course.deg();
 }

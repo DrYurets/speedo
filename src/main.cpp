@@ -35,6 +35,20 @@ void loop() {
   odoUpdate(tele);
   odoFill(tele);
 
+#ifdef SPEEDO_DEMO
+  // Демо-экран для проверки вёрстки: env esp32-c3-demo
+  tele.fixValid    = true;
+  tele.sats        = 9;
+  tele.hdop        = 0.9f;
+  tele.speedKmh    = 115.0f;
+  tele.tripKm      = 581.0f;
+  tele.odoKm       = 10215.0;
+  tele.maxSpeedKmh = 121.0f;
+  tele.tripSec     = 6 * 3600 + 12 * 60;
+  tele.batV        = 4.05f;
+  tele.batPct      = 78;
+#endif
+
   if (millis() - batT >= 1000) {
     batT = millis();
     batteryFill(tele);

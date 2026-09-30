@@ -5,6 +5,8 @@ extern const uint8_t MENU_COUNT;
 
 void displayInit();
 void displayContrast(uint8_t v);
+void menuSetDialLabel(bool needle);
+void menuSetBarLabel(bool on);
 
 void drawSpeedo(const Telemetry& t);
 void drawTrip(const Telemetry& t);

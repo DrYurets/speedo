@@ -4,6 +4,7 @@
 #include "display.h"
 #include "odometer.h"
 #include "ota.h"
+#include <Preferences.h>
 
 static const uint32_t DEBOUNCE_MS   = 30;
 static const uint32_t LONG_MS       = 800;
@@ -89,11 +90,31 @@ static void menuSelect() {
   switch (menuCursor) {
     case 0: confirmAct = 1; mode = Mode::CONFIRM; break;
     case 1: confirmAct = 2; mode = Mode::CONFIRM; break;
-    case 2:
+    case 2:  // вид спидометра: цифры ⇄ стрелка+цифра
+      tele.needleMode = !tele.needleMode;
+      menuSetDialLabel(tele.needleMode);
+      {
+        Preferences p;
+        p.begin("speedo", false);
+        p.putBool("needle", tele.needleMode);
+        p.end();
+      }
+      break;
+    case 3:  // линейная шкала под цифрами: вкл ⇄ выкл
+      tele.barScale = !tele.barScale;
+      menuSetBarLabel(tele.barScale);
+      {
+        Preferences p;
+        p.begin("speedo", false);
+        p.putBool("bar", tele.barScale);
+        p.end();
+      }
+      break;
+    case 4:
       brightIdx = (brightIdx + 1) % CONTRAST_COUNT;
       displayContrast(CONTRASTS[brightIdx]);
       break;
-    case 3:
+    case 5:
       otaStart();
       otaStartMs = millis();
       mode = Mode::OTA;
@@ -135,6 +156,15 @@ static void handleEvent(BtnEvent e) {
 }
 
 void uiInit() {
+  {
+    Preferences p;
+    p.begin("speedo", true);
+    tele.needleMode = p.getBool("needle", false);
+    tele.barScale   = p.getBool("bar", true);
+    p.end();
+    menuSetDialLabel(tele.needleMode);
+    menuSetBarLabel(tele.barScale);
+  }
   bMode.pin = PIN_BTN_MODE;
   bSet.pin  = PIN_BTN_SET;
   bBack.pin = PIN_BTN_BACK;

@@ -6,7 +6,6 @@ struct Telemetry {
   // GPS
   bool     fixValid    = false;
   float    speedKmh    = 0;
-  float    courseDeg   = 0;
   uint8_t  sats        = 0;
   float    hdop        = 99.9f;
   double   lat         = 0;
@@ -25,9 +24,14 @@ struct Telemetry {
   int      batPct      = 0;
   bool     batCharging = false;
 
+  // UI
+  bool     needleMode  = false; // false = только цифры, true = стрелка+цифра
+  bool     barScale    = true;  // линейная шкала под цифрами (режим «цифры»)
+
   // OTA
   bool     otaActive   = false;
-  String   otaStatus;       // "Подключение...", IP, "Готово..."
+  String   otaStatus;       // имя сети / "Заливка...", "Ошибка"
+  String   otaIp;           // IP точки доступа (192.168.4.1)
   int      otaProgress = -1; // -1 = нет передачи, 0..100 = идёт заливка
 };
 
