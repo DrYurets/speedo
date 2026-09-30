@@ -24,11 +24,13 @@ enum class BtnEvent : uint8_t { NONE, SHORT_MODE, SHORT_SET, SHORT_BACK, LONG_SE
 
 static Button bMode, bSet, bBack;
 
-enum class Mode : uint8_t { SCREENS, MENU, CONFIRM, OTA };
+enum class Mode : uint8_t { SCREENS, MENU, CONFIRM, OTA, ODO_EDIT };
 static Mode    mode       = Mode::SCREENS;
-static uint8_t screenIdx  = 0;   // 0=Speedo 1=Trip 2=Gps
+static uint8_t screenIdx  = 0;   // 0=Speedo 1=Trip 2=Service 3=Gps
 static uint8_t menuCursor = 0;
-static uint8_t confirmAct = 0;   // 0 нет, 1 сброс поездки, 2 сброс одометра
+static uint8_t confirmAct = 0;   // 0 нет, 1 сброс поездки, 3 ТО пройдено
+static char    odoDigits[7];     // редактор одометра: 6 цифр + \0
+static uint8_t odoPos     = 0;
 static uint8_t brightIdx  = 0;
 static uint32_t lastDraw  = 0;
 static uint32_t otaStartMs = 0;
@@ -72,13 +74,17 @@ static void render() {
     case Mode::SCREENS:
       if (screenIdx == 0)      drawSpeedo(tele);
       else if (screenIdx == 1) drawTrip(tele);
+      else if (screenIdx == 2) drawService(tele);
       else                     drawGps(tele);
       break;
     case Mode::MENU:
       drawMenu(menuCursor);
       break;
     case Mode::CONFIRM:
-      drawConfirm(confirmAct == 1 ? "Сбросить поездку?" : "Сбросить одометр?");
+      drawConfirm(confirmAct == 1 ? "Сбросить поездку?" : "Отметить ТО?");
+      break;
+    case Mode::ODO_EDIT:
+      drawOdoEdit(odoDigits, odoPos);
       break;
     case Mode::OTA:
       drawOta(tele);
@@ -86,10 +92,18 @@ static void render() {
   }
 }
 
+static void odoEditEnter() {
+  double v = tele.odoKm;
+  if (v > 999999.0) v = 999999.0;
+  if (v < 0) v = 0;
+  snprintf(odoDigits, sizeof(odoDigits), "%06.0f", v);
+  odoPos = 0;
+}
+
 static void menuSelect() {
   switch (menuCursor) {
     case 0: confirmAct = 1; mode = Mode::CONFIRM; break;
-    case 1: confirmAct = 2; mode = Mode::CONFIRM; break;
+    case 1: odoEditEnter(); mode = Mode::ODO_EDIT; break;
     case 2:  // вид спидометра: цифры ⇄ стрелка+цифра
       tele.needleMode = !tele.needleMode;
       menuSetDialLabel(tele.needleMode);
@@ -110,11 +124,19 @@ static void menuSelect() {
         p.end();
       }
       break;
-    case 4:
+    case 4: {  // интервал ТО: шаг 500, от 5000 до 15000, по кругу
+      uint16_t next = svcGetInterval() + 500;
+      if (next > 15000 || next < 5000) next = 5000;
+      svcSetInterval(next);
+      menuSetSvcLabel(next);
+      break;
+    }
+    case 5: confirmAct = 3; mode = Mode::CONFIRM; break;
+    case 6:
       brightIdx = (brightIdx + 1) % CONTRAST_COUNT;
       displayContrast(CONTRASTS[brightIdx]);
       break;
-    case 5:
+    case 7:
       otaStart();
       otaStartMs = millis();
       mode = Mode::OTA;
@@ -126,7 +148,7 @@ static void menuSelect() {
 static void handleEvent(BtnEvent e) {
   switch (mode) {
     case Mode::SCREENS:
-      if (e == BtnEvent::SHORT_MODE) screenIdx = (screenIdx + 1) % 3;
+      if (e == BtnEvent::SHORT_MODE) screenIdx = (screenIdx + 1) % 4;
       else if (e == BtnEvent::LONG_SET) { mode = Mode::MENU; menuCursor = 0; }
       break;
 
@@ -139,8 +161,21 @@ static void handleEvent(BtnEvent e) {
     case Mode::CONFIRM:
       if (e == BtnEvent::SHORT_SET) {
         if (confirmAct == 1) odoResetTrip();
-        else                 odoResetTotal();
+        else                 svcMarkDone();
         mode = Mode::SCREENS;
+      } else if (e == BtnEvent::SHORT_BACK) {
+        mode = Mode::MENU;
+      }
+      break;
+
+    case Mode::ODO_EDIT:
+      if (e == BtnEvent::SHORT_MODE) {
+        odoDigits[odoPos] = (odoDigits[odoPos] == '9') ? '0' : odoDigits[odoPos] + 1;
+      } else if (e == BtnEvent::SHORT_SET) {
+        if (++odoPos >= 6) {
+          odoSetTotal(atof(odoDigits));
+          mode = Mode::MENU;
+        }
       } else if (e == BtnEvent::SHORT_BACK) {
         mode = Mode::MENU;
       }
@@ -164,6 +199,7 @@ void uiInit() {
     p.end();
     menuSetDialLabel(tele.needleMode);
     menuSetBarLabel(tele.barScale);
+    menuSetSvcLabel(svcGetInterval());
   }
   bMode.pin = PIN_BTN_MODE;
   bSet.pin  = PIN_BTN_SET;

@@ -15,12 +15,16 @@ static uint32_t tripMs    = 0;
 static uint32_t lastMs    = 0;
 static uint32_t lastSaveMs = 0;
 static double   savedKm   = 0;
+static double   svcOdoKm  = 0;        // одометр на момент последнего ТО
+static uint16_t svcIntKm  = 10000;    // интервал ТО по умолчанию
 
 void odoInit() {
   prefs.begin("speedo", false);
-  odoKm   = prefs.getDouble("odo_km", 0.0);
-  savedKm = odoKm;
-  lastMs  = millis();
+  odoKm    = prefs.getDouble("odo_km", 0.0);
+  svcOdoKm = prefs.getDouble("svc_odo", 0.0);
+  svcIntKm = prefs.getUShort("svc_int", 10000);
+  savedKm  = odoKm;
+  lastMs   = millis();
 }
 
 void odoUpdate(const Telemetry& t) {
@@ -52,6 +56,8 @@ void odoFill(Telemetry& t) {
   t.odoKm       = odoKm;
   t.maxSpeedKmh = maxSpeed;
   t.tripSec     = tripMs / 1000;
+  t.svcOdoKm      = svcOdoKm;
+  t.svcIntervalKm = svcIntKm;
 }
 
 void odoResetTrip() {
@@ -61,4 +67,21 @@ void odoResetTrip() {
 void odoResetTotal() {
   odoKm = 0; savedKm = 0;
   prefs.putDouble("odo_km", 0.0);
+}
+
+void odoSetTotal(double km) {
+  odoKm = km; savedKm = km;
+  prefs.putDouble("odo_km", km);
+}
+
+void svcSetInterval(uint16_t km) {
+  svcIntKm = km;
+  prefs.putUShort("svc_int", km);
+}
+
+uint16_t svcGetInterval() { return svcIntKm; }
+
+void svcMarkDone() {
+  svcOdoKm = odoKm;
+  prefs.putDouble("svc_odo", svcOdoKm);
 }

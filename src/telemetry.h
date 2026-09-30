@@ -19,6 +19,10 @@ struct Telemetry {
   float    maxSpeedKmh = 0;
   uint32_t tripSec     = 0;
 
+  // ТО (замена масла)
+  double   svcOdoKm      = 0;  // одометр на момент последнего ТО
+  uint16_t svcIntervalKm = 0;  // интервал ТО, км (5000–15000 шаг 500)
+
   // АКБ
   float    batV        = 0;
   int      batPct      = 0;

@@ -12,11 +12,15 @@ static U8G2_SH1107_PIMORONI_128X128_F_HW_I2C u8g2(
     U8G2_R1, /* reset=*/ U8X8_PIN_NONE,
     /* clock=*/ PIN_OLED_SCL, /* data=*/ PIN_OLED_SDA);
 
+static char svcLabel[20] = "ТО: 10000 км";
+
 const char* MENU_ITEMS[] = {
     "Сброс поездки",
-    "Сброс одометра",
+    "Одометр: задать",
     "Вид: цифры",
     "Шкала: вкл",
+    svcLabel,
+    "ТО пройдено",
     "Яркость",
     "Обновление (WiFi)",
     "Выход",
@@ -29,6 +33,10 @@ void menuSetDialLabel(bool needle) {
 
 void menuSetBarLabel(bool on) {
   MENU_ITEMS[3] = on ? "Шкала: вкл" : "Шкала: выкл";
+}
+
+void menuSetSvcLabel(uint16_t km) {
+  snprintf(svcLabel, sizeof(svcLabel), "ТО: %u км", km);
 }
 
 void displayInit() {
@@ -62,7 +70,16 @@ static void drawTopBar(const Telemetry& t) {
   u8g2.setFont(u8g2_font_6x13_t_cyrillic);
   char obuf[16];
   snprintf(obuf, sizeof(obuf), "%.0f", t.odoKm);
-  u8g2.drawUTF8(64 - u8g2.getUTF8Width(obuf) / 2, 10, obuf);
+  int ow = u8g2.getUTF8Width(obuf);
+  u8g2.drawUTF8(64 - ow / 2, 10, obuf);
+
+  // иконка просрочки ТО: треугольник с «!» справа от одометра
+  if (t.svcIntervalKm && t.odoKm - t.svcOdoKm > (double)t.svcIntervalKm) {
+    int ix = 64 + ow / 2 + 5;
+    u8g2.drawTriangle(ix + 5, 1, ix, 12, ix + 10, 12);
+    u8g2.drawVLine(ix + 5, 4, 4);
+    u8g2.drawPixel(ix + 5, 10);
+  }
 
   // батарея в правом углу: рамка 16x8 + клемма + заливка
   int bx = 128 - 18, by = 2;
@@ -109,17 +126,14 @@ static void drawDialTicks() {
 static void drawNeedle(float kmh) {
   if (kmh > SPD_MAX) kmh = SPD_MAX;
   if (kmh < 0) kmh = 0;
-  float a  = speedAngle(kmh);
+  // 0 км/ч → первый штрих (10), максимум → последний (110)
+  float a  = speedAngle(10.0f + kmh * (110.0f - 10.0f) / SPD_MAX);
   int   nx = DIAL_CX + (int)roundf(cosf(a) * 48);
   int   ny = DIAL_CY + (int)roundf(sinf(a) * 48);
   // жирная стрелка — три линии
   u8g2.drawLine(DIAL_CX - 1, DIAL_CY, nx - 1, ny);
   u8g2.drawLine(DIAL_CX,     DIAL_CY, nx,     ny);
   u8g2.drawLine(DIAL_CX + 1, DIAL_CY, nx + 1, ny);
-  // кружок на стрелке (~2/3 длины от оси)
-  int kx = DIAL_CX + (int)roundf(cosf(a) * 31);
-  int ky = DIAL_CY + (int)roundf(sinf(a) * 31);
-  u8g2.drawCircle(kx, ky, 4);
   u8g2.drawDisc(DIAL_CX, DIAL_CY, 4);                 // ось
 }
 
@@ -149,7 +163,7 @@ void drawSpeedo(const Telemetry& t) {
 
   if (t.needleMode) {
     drawDialTicks();
-    if (t.fixValid) drawNeedle(t.speedKmh);
+    drawNeedle(t.fixValid ? t.speedKmh : 0);   // стрелка всегда, без данных — на нуле
     u8g2.setFont(u8g2_font_logisoso32_tn);
     if (t.fixValid) {
       snprintf(buf, sizeof(buf), "%d", (int)(t.speedKmh + 0.5f));
@@ -236,16 +250,63 @@ void drawGps(const Telemetry& t) {
   u8g2.sendBuffer();
 }
 
+void drawService(const Telemetry& t) {
+  char buf[40];
+  u8g2.clearBuffer();
+  drawTopBar(t);
+
+  u8g2.setFont(u8g2_font_10x20_t_cyrillic);
+  u8g2.drawUTF8(64 - u8g2.getUTF8Width("ТО") / 2, 36, "ТО");
+
+  double sinceSvc = t.odoKm - t.svcOdoKm;
+  double left     = (double)t.svcIntervalKm - sinceSvc;
+
+  u8g2.setFont(u8g2_font_6x13_t_cyrillic);
+  snprintf(buf, sizeof(buf), "Интервал   %u км", (unsigned)t.svcIntervalKm);
+  u8g2.drawUTF8(4, 60, buf);
+  snprintf(buf, sizeof(buf), "Последнее  %.0f км", t.svcOdoKm);
+  u8g2.drawUTF8(4, 76, buf);
+  snprintf(buf, sizeof(buf), "Пройдено   %.0f км", sinceSvc);
+  u8g2.drawUTF8(4, 92, buf);
+  if (left >= 0) snprintf(buf, sizeof(buf), "Осталось   %.0f км", left);
+  else           snprintf(buf, sizeof(buf), "ПРОСРОЧЕНО %.0f км", -left);
+  u8g2.drawUTF8(4, 108, buf);
+
+  u8g2.sendBuffer();
+}
+
+// Редактор одометра: 6 цифр, MODE — +1 к цифре, SET — следующая,
+// после последней — сохранение, BACK — отмена.
+void drawOdoEdit(const char* digits, uint8_t pos) {
+  u8g2.clearBuffer();
+
+  u8g2.setFont(u8g2_font_10x20_t_cyrillic);
+  u8g2.drawUTF8(64 - u8g2.getUTF8Width("ОДОМЕТР") / 2, 30, "ОДОМЕТР");
+
+  u8g2.setFont(u8g2_font_10x20_t_cyrillic);
+  int dw = u8g2.getStrWidth("0");
+  int x0 = 64 - dw * 3;
+  for (uint8_t i = 0; i < 6; i++) {
+    u8g2.drawGlyph(x0 + i * dw, 62, digits[i]);
+  }
+  u8g2.drawBox(x0 + pos * dw, 66, dw, 2);   // курсор под цифрой
+
+  u8g2.setFont(u8g2_font_6x13_t_cyrillic);
+  u8g2.drawUTF8(4, 96, "MODE — цифра, SET — далее");
+  u8g2.drawUTF8(4, 112, "BACK — отмена");
+  u8g2.sendBuffer();
+}
+
 void drawMenu(uint8_t cursor) {
   u8g2.clearBuffer();
 
   u8g2.setFont(u8g2_font_10x20_t_cyrillic);
-  u8g2.drawUTF8(64 - u8g2.getUTF8Width("МЕНЮ") / 2, 20, "МЕНЮ");
-  u8g2.drawHLine(0, 26, 128);
+  u8g2.drawUTF8(64 - u8g2.getUTF8Width("МЕНЮ") / 2, 17, "МЕНЮ");
+  u8g2.drawHLine(0, 22, 128);
 
   u8g2.setFont(u8g2_font_6x13_t_cyrillic);
   for (uint8_t i = 0; i < MENU_COUNT; i++) {
-    int y = 38 + i * 13;
+    int y = 33 + i * 11;
     if (i == cursor) u8g2.drawUTF8(4, y, ">");
     u8g2.drawUTF8(18, y, MENU_ITEMS[i]);
   }
