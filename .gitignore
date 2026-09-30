@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+.venv-pio/
+src/secrets.h
+*.local
