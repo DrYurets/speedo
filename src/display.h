@@ -7,7 +7,10 @@ void displayInit();
 void displayContrast(uint8_t v);
 void menuSetDialLabel(bool needle);
 void menuSetBarLabel(bool on);
+void menuSetClockLabel(bool on);
+void menuSetHudLabel(bool on);
 void menuSetSvcLabel(uint16_t km);
+void displayMirror(bool on);   // HUD-зеркало
 
 void drawSpeedo(const Telemetry& t);
 void drawTrip(const Telemetry& t);

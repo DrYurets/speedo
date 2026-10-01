@@ -19,6 +19,8 @@ const char* MENU_ITEMS[] = {
     "Одометр: задать",
     "Вид: цифры",
     "Шкала: вкл",
+    "Часы: вкл",
+    "HUD: выкл",
     svcLabel,
     "ТО пройдено",
     "Яркость",
@@ -35,6 +37,14 @@ void menuSetBarLabel(bool on) {
   MENU_ITEMS[3] = on ? "Шкала: вкл" : "Шкала: выкл";
 }
 
+void menuSetClockLabel(bool on) {
+  MENU_ITEMS[4] = on ? "Часы: вкл" : "Часы: выкл";
+}
+
+void menuSetHudLabel(bool on) {
+  MENU_ITEMS[5] = on ? "HUD: вкл" : "HUD: выкл";
+}
+
 void menuSetSvcLabel(uint16_t km) {
   snprintf(svcLabel, sizeof(svcLabel), "ТО: %u км", km);
 }
@@ -47,22 +57,33 @@ void displayInit() {
 
 void displayContrast(uint8_t v) { u8g2.setContrast(v); }
 
+// Зеркало для HUD (экран лицом вверх на торпеде, читаем в отражении
+// лобового). Контроллеру шлём команды напрямую — u8g2.setFlipMode
+// делает 180°, а нужна одна ось. Если ось не та — заменить пару
+// на 0xc0/0xc8 (COM scan direction).
+void displayMirror(bool on) {
+  u8g2.sendF("c", on ? 0xa1 : 0xa0);   // SH1107 segment remap
+}
+
 // Верхняя строка: уровень сигнала (палочки) | одометр | иконка батареи
 static void drawTopBar(const Telemetry& t) {
-  // палочки как в телефоне: максимум 5, высота нарастает;
-  // незначащие палочки не рисуем; нет спутников → крестик
-  // 1-3 → 1; 4-6 → 2; 7-9 → 3; 10-12 → 4; 13+ → 5
+  // палочки как в телефоне: 1 палочка = 1 спутник, максимум 5;
+  // больше 5 спутников — 5 палочек + маленький «+» после индикатора;
+  // нет спутников → крестик
   if (t.sats == 0) {
     u8g2.drawLine(2, 2, 11, 11);
     u8g2.drawLine(11, 2, 2, 11);
     u8g2.drawLine(3, 2, 12, 11);
     u8g2.drawLine(12, 2, 3, 11);
   } else {
-    uint8_t bars = (uint8_t)((t.sats + 2) / 3);
-    if (bars > 5) bars = 5;
+    uint8_t bars = t.sats > 5 ? 5 : t.sats;
     for (uint8_t i = 0; i < bars; i++) {
       int bh = 3 + i * 2;          // высоты 3,5,7,9,11
       u8g2.drawBox(i * 4, 11 - bh, 3, bh);
+    }
+    if (t.sats > 5) {
+      u8g2.drawHLine(21, 7, 5);    // «+» после палочек
+      u8g2.drawVLine(23, 5, 5);
     }
   }
 
@@ -159,6 +180,23 @@ static void drawSpeedBar(float kmh, bool hasFix) {
 void drawSpeedo(const Telemetry& t) {
   char buf[32];
   u8g2.clearBuffer();
+
+  // HUD: только скорость максимально крупно (картинка зеркалится
+  // контроллером через displayMirror)
+  if (t.hudMode) {
+    if (t.fixValid) {
+      int v = (int)(t.speedKmh + 0.5f);
+      // 3 знака → поменьше, 1–2 знака → максимальный шрифт
+      u8g2.setFont(v >= 100 ? u8g2_font_logisoso62_tn
+                            : u8g2_font_logisoso92_tn);
+      snprintf(buf, sizeof(buf), "%d", v);
+      int y = 64 + (u8g2.getAscent() + u8g2.getDescent()) / 2;
+      u8g2.drawStr(64 - u8g2.getStrWidth(buf) / 2, y, buf);
+    }
+    u8g2.sendBuffer();
+    return;
+  }
+
   drawTopBar(t);
 
   if (t.needleMode) {
@@ -186,6 +224,12 @@ void drawSpeedo(const Telemetry& t) {
 
   snprintf(buf, sizeof(buf), "%d км/ч", (int)(t.maxSpeedKmh + 0.5f));
   u8g2.drawUTF8(126 - u8g2.getUTF8Width(buf), 124, buf);
+
+  // часы по центру нижней строки (UTC+3)
+  if (t.clockShow && t.timeValid) {
+    snprintf(buf, sizeof(buf), "%02d:%02d", t.clockH, t.clockM);
+    u8g2.drawUTF8(64 - u8g2.getUTF8Width(buf) / 2, 124, buf);
+  }
 
   u8g2.sendBuffer();
 }
@@ -304,12 +348,22 @@ void drawMenu(uint8_t cursor) {
   u8g2.drawUTF8(64 - u8g2.getUTF8Width("МЕНЮ") / 2, 17, "МЕНЮ");
   u8g2.drawHLine(0, 22, 128);
 
+  // пунктов больше, чем влезает — прокрутка окном
+  const uint8_t VIS = 7;
+  uint8_t first = 0;
+  if (cursor >= VIS) first = cursor - VIS + 1;
+
   u8g2.setFont(u8g2_font_6x13_t_cyrillic);
-  for (uint8_t i = 0; i < MENU_COUNT; i++) {
-    int y = 33 + i * 11;
+  for (uint8_t i = first; i < MENU_COUNT && i < first + VIS; i++) {
+    int y = 35 + (i - first) * 13;
     if (i == cursor) u8g2.drawUTF8(4, y, ">");
     u8g2.drawUTF8(18, y, MENU_ITEMS[i]);
   }
+  // треугольники «есть ещё» сверху/снизу справа
+  if (first > 0)
+    u8g2.drawTriangle(118, 31, 124, 31, 121, 26);
+  if (first + VIS < MENU_COUNT)
+    u8g2.drawTriangle(118, 117, 124, 117, 121, 122);
   u8g2.sendBuffer();
 }
 

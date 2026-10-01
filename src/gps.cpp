@@ -32,4 +32,12 @@ void gpsFill(Telemetry& t) {
 
   bool spdOk = gps.speed.isValid() && gps.speed.age() < 3000;
   t.speedKmh = spdOk ? gps.speed.kmph() : 0;
+
+  // Часы: UTC из GPS + фиксированный пояс UTC+3 (Минск, DST отменён)
+  bool tOk = gps.time.isValid() && gps.time.age() < 3000;
+  t.timeValid = tOk;
+  if (tOk) {
+    t.clockH = (gps.time.hour() + 3) % 24;
+    t.clockM = gps.time.minute();
+  }
 }

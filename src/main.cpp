@@ -49,6 +49,9 @@ void loop() {
   tele.batPct      = 78;
   tele.svcIntervalKm = 10000;
   tele.svcOdoKm      = 200.0;   // ТО просрочено на ~15 км — видна иконка
+  tele.timeValid     = true;
+  tele.clockH        = 21;
+  tele.clockM        = 34;
 #endif
 
   if (millis() - batT >= 1000) {

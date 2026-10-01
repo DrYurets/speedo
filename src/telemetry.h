@@ -23,6 +23,11 @@ struct Telemetry {
   double   svcOdoKm      = 0;  // одометр на момент последнего ТО
   uint16_t svcIntervalKm = 0;  // интервал ТО, км (5000–15000 шаг 500)
 
+  // Часы (GPS-время + UTC+3, Минск)
+  uint8_t  clockH      = 0;
+  uint8_t  clockM      = 0;
+  bool     timeValid   = false;
+
   // АКБ
   float    batV        = 0;
   int      batPct      = 0;
@@ -31,6 +36,8 @@ struct Telemetry {
   // UI
   bool     needleMode  = false; // false = только цифры, true = стрелка+цифра
   bool     barScale    = true;  // линейная шкала под цифрами (режим «цифры»)
+  bool     clockShow   = true;  // часы внизу главного экрана
+  bool     hudMode     = false; // HUD: только цифры скорости, зеркально
 
   // OTA
   bool     otaActive   = false;

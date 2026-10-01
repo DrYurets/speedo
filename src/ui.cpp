@@ -20,7 +20,8 @@ struct Button {
   bool     longFired  = false;
 };
 
-enum class BtnEvent : uint8_t { NONE, SHORT_MODE, SHORT_SET, SHORT_BACK, LONG_SET };
+enum class BtnEvent : uint8_t { NONE, SHORT_MODE, SHORT_SET, SHORT_BACK,
+                                LONG_SET, LONG_BACK };
 
 static Button bMode, bSet, bBack;
 
@@ -60,16 +61,21 @@ static BtnEvent pollButtons() {
   if (pollBtn(bMode, lg)) return BtnEvent::SHORT_MODE;
   if (pollBtn(bSet, lg))  return BtnEvent::SHORT_SET;
   if (pollBtn(bBack, lg)) return BtnEvent::SHORT_BACK;
-  // длинное SET — проверка удержания
+  // длинные SET и BACK — проверка удержания
   if (!bSet.stableHigh && !bSet.longFired && millis() - bSet.pressedAt >= LONG_MS) {
     bSet.longFired = true;
     return BtnEvent::LONG_SET;
+  }
+  if (!bBack.stableHigh && !bBack.longFired && millis() - bBack.pressedAt >= LONG_MS) {
+    bBack.longFired = true;
+    return BtnEvent::LONG_BACK;
   }
   return BtnEvent::NONE;
 }
 
 static void render() {
   lastDraw = millis();
+  displayMirror(tele.hudMode);   // в HUD весь вывод зеркальный
   switch (mode) {
     case Mode::SCREENS:
       if (screenIdx == 0)      drawSpeedo(tele);
@@ -100,6 +106,15 @@ static void odoEditEnter() {
   odoPos = 0;
 }
 
+static void hudToggle() {
+  tele.hudMode = !tele.hudMode;
+  menuSetHudLabel(tele.hudMode);
+  Preferences p;
+  p.begin("speedo", false);
+  p.putBool("hud", tele.hudMode);
+  p.end();
+}
+
 static void menuSelect() {
   switch (menuCursor) {
     case 0: confirmAct = 1; mode = Mode::CONFIRM; break;
@@ -124,19 +139,32 @@ static void menuSelect() {
         p.end();
       }
       break;
-    case 4: {  // интервал ТО: шаг 500, от 5000 до 15000, по кругу
+    case 4:  // часы на главном экране: вкл ⇄ выкл
+      tele.clockShow = !tele.clockShow;
+      menuSetClockLabel(tele.clockShow);
+      {
+        Preferences p;
+        p.begin("speedo", false);
+        p.putBool("clock", tele.clockShow);
+        p.end();
+      }
+      break;
+    case 5:  // HUD: зеркальные крупные цифры скорости
+      hudToggle();
+      break;
+    case 6: {  // интервал ТО: шаг 500, от 5000 до 15000, по кругу
       uint16_t next = svcGetInterval() + 500;
       if (next > 15000 || next < 5000) next = 5000;
       svcSetInterval(next);
       menuSetSvcLabel(next);
       break;
     }
-    case 5: confirmAct = 3; mode = Mode::CONFIRM; break;
-    case 6:
+    case 7: confirmAct = 3; mode = Mode::CONFIRM; break;
+    case 8:
       brightIdx = (brightIdx + 1) % CONTRAST_COUNT;
       displayContrast(CONTRASTS[brightIdx]);
       break;
-    case 7:
+    case 9:
       otaStart();
       otaStartMs = millis();
       mode = Mode::OTA;
@@ -150,6 +178,7 @@ static void handleEvent(BtnEvent e) {
     case Mode::SCREENS:
       if (e == BtnEvent::SHORT_MODE) screenIdx = (screenIdx + 1) % 4;
       else if (e == BtnEvent::LONG_SET) { mode = Mode::MENU; menuCursor = 0; }
+      else if (e == BtnEvent::LONG_BACK) hudToggle();  // проекция вкл/выкл
       break;
 
     case Mode::MENU:
@@ -196,9 +225,13 @@ void uiInit() {
     p.begin("speedo", true);
     tele.needleMode = p.getBool("needle", false);
     tele.barScale   = p.getBool("bar", true);
+    tele.clockShow  = p.getBool("clock", true);
+    tele.hudMode    = p.getBool("hud", false);
     p.end();
     menuSetDialLabel(tele.needleMode);
     menuSetBarLabel(tele.barScale);
+    menuSetClockLabel(tele.clockShow);
+    menuSetHudLabel(tele.hudMode);
     menuSetSvcLabel(svcGetInterval());
   }
   bMode.pin = PIN_BTN_MODE;

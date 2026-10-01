@@ -59,6 +59,8 @@ pio device monitor                       # логи 115200
 3. На компьютере:
 
 ```bash
+./ota.sh                      # проверит пакеты, соберёт и зальёт
+# либо вручную:
 OTA_PASSWORD=пароль_из_secrets pio run -e esp32-c3-ota -t upload
 ```
 
