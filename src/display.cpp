@@ -12,7 +12,8 @@ static U8G2_SH1107_PIMORONI_128X128_F_HW_I2C u8g2(
     U8G2_R1, /* reset=*/ U8X8_PIN_NONE,
     /* clock=*/ PIN_OLED_SCL, /* data=*/ PIN_OLED_SDA);
 
-static char svcLabel[20] = "ТО: 10000 км";
+static char svcLabel[20]    = "ТО: 10000 км";
+static char brightLabel[20] = "Яркость: 10";
 
 const char* MENU_ITEMS[] = {
     "Сброс поездки",
@@ -21,9 +22,11 @@ const char* MENU_ITEMS[] = {
     "Шкала: вкл",
     "Часы: вкл",
     "HUD: выкл",
+    "А-HUD: выкл",
     svcLabel,
     "ТО пройдено",
-    "Яркость",
+    brightLabel,
+    "Автояркость: вкл",
     "Обновление (WiFi)",
     "Выход",
 };
@@ -45,8 +48,20 @@ void menuSetHudLabel(bool on) {
   MENU_ITEMS[5] = on ? "HUD: вкл" : "HUD: выкл";
 }
 
+void menuSetAutoHudLabel(bool on) {
+  MENU_ITEMS[6] = on ? "А-HUD: вкл" : "А-HUD: выкл";
+}
+
+void menuSetAutoBrightLabel(bool on) {
+  MENU_ITEMS[10] = on ? "Автояркость: вкл" : "Автояркость: выкл";
+}
+
 void menuSetSvcLabel(uint16_t km) {
   snprintf(svcLabel, sizeof(svcLabel), "ТО: %u км", km);
+}
+
+void menuSetBrightLabel(uint8_t level) {
+  snprintf(brightLabel, sizeof(brightLabel), "Яркость: %u", level);
 }
 
 void displayInit() {
@@ -59,31 +74,24 @@ void displayContrast(uint8_t v) { u8g2.setContrast(v); }
 
 // Зеркало для HUD (экран лицом вверх на торпеде, читаем в отражении
 // лобового). Контроллеру шлём команды напрямую — u8g2.setFlipMode
-// делает 180°, а нужна одна ось. Если ось не та — заменить пару
-// на 0xc0/0xc8 (COM scan direction).
+// делает 180°, а нужна одна ось. 0xc8/0xc0 — COM scan direction:
+// зеркалит по вертикали (цифры вверх ногами + отзеркаленные).
 void displayMirror(bool on) {
-  u8g2.sendF("c", on ? 0xa1 : 0xa0);   // SH1107 segment remap
+  u8g2.sendF("c", on ? 0xc8 : 0xc0);   // SH1107 COM scan dir
 }
 
 // Верхняя строка: уровень сигнала (палочки) | одометр | иконка батареи
 static void drawTopBar(const Telemetry& t) {
-  // палочки как в телефоне: 1 палочка = 1 спутник, максимум 5;
-  // больше 5 спутников — 5 палочек + маленький «+» после индикатора;
-  // нет спутников → крестик
-  if (t.sats == 0) {
+  // палочки уровня сигнала (средний SNR из GSV): 0 → крестик
+  if (t.sigBars == 0) {
     u8g2.drawLine(2, 2, 11, 11);
     u8g2.drawLine(11, 2, 2, 11);
     u8g2.drawLine(3, 2, 12, 11);
     u8g2.drawLine(12, 2, 3, 11);
   } else {
-    uint8_t bars = t.sats > 5 ? 5 : t.sats;
-    for (uint8_t i = 0; i < bars; i++) {
+    for (uint8_t i = 0; i < t.sigBars; i++) {
       int bh = 3 + i * 2;          // высоты 3,5,7,9,11
       u8g2.drawBox(i * 4, 11 - bh, 3, bh);
-    }
-    if (t.sats > 5) {
-      u8g2.drawHLine(21, 7, 5);    // «+» после палочек
-      u8g2.drawVLine(23, 5, 5);
     }
   }
 
@@ -113,19 +121,19 @@ static void drawTopBar(const Telemetry& t) {
   }
 }
 
-// Шкала спидометра: пунктирная дуга ~270°, деления по 10 км/ч до 120 км/ч,
-// без крайних рисок (0 и 120); риски на 60 и 90 длиннее и толще.
+// Шкала спидометра: пунктирная дуга 225° (от 157.5° до 382.5°),
+// все штрихи 0,10,...,120; риски на 60 и 90 длиннее и толще.
 // Центр дуги (64,74), радиус 57.
 static const int   DIAL_CX = 64, DIAL_CY = 74, DIAL_R = 57;
 static const float SPD_MAX = 120.0f;
 
-// 0 км/ч → 135° (лево-низ), 120 км/ч → 45° (право-низ); ход по часовой
+// 0 км/ч → 157.5° (лево-низ), 120 км/ч → 382.5° (право-низ); шаг 1.875°/кмч
 static float speedAngle(float kmh) {
-  return (135.0f + 270.0f * kmh / SPD_MAX) * (float)M_PI / 180.0f;
+  return (157.5f + 225.0f * kmh / SPD_MAX) * (float)M_PI / 180.0f;
 }
 
 static void drawDialTicks() {
-  for (int s = 10; s < 120; s += 10) {
+  for (int s = 0; s <= 120; s += 10) {
     float a   = speedAngle(s);
     bool  big = (s == 60 || s == 90);
     int   rIn = big ? 45 : 51;
@@ -147,8 +155,8 @@ static void drawDialTicks() {
 static void drawNeedle(float kmh) {
   if (kmh > SPD_MAX) kmh = SPD_MAX;
   if (kmh < 0) kmh = 0;
-  // 0 км/ч → первый штрих (10), максимум → последний (110)
-  float a  = speedAngle(10.0f + kmh * (110.0f - 10.0f) / SPD_MAX);
+  // угол = позиция штриха на дуге (0 → первый штрих, 120 → последний)
+  float a  = speedAngle(kmh);
   int   nx = DIAL_CX + (int)roundf(cosf(a) * 48);
   int   ny = DIAL_CY + (int)roundf(sinf(a) * 48);
   // жирная стрелка — три линии
@@ -202,10 +210,10 @@ void drawSpeedo(const Telemetry& t) {
   if (t.needleMode) {
     drawDialTicks();
     drawNeedle(t.fixValid ? t.speedKmh : 0);   // стрелка всегда, без данных — на нуле
-    u8g2.setFont(u8g2_font_logisoso32_tn);
+    u8g2.setFont(u8g2_font_logisoso30_tn);
     if (t.fixValid) {
       snprintf(buf, sizeof(buf), "%d", (int)(t.speedKmh + 0.5f));
-      u8g2.drawStr(64 - u8g2.getStrWidth(buf) / 2, 110, buf);
+      u8g2.drawStr(64 - u8g2.getStrWidth(buf) / 2, 114, buf);
     }
   } else {
     u8g2.setFont(u8g2_font_logisoso62_tn);
@@ -218,17 +226,17 @@ void drawSpeedo(const Telemetry& t) {
 
   // нижняя строка: поездка слева | макс справа
   u8g2.setFont(u8g2_font_6x13_t_cyrillic);
-  if (t.tripKm < 100.0f) snprintf(buf, sizeof(buf), "%.1f км", t.tripKm);
-  else                   snprintf(buf, sizeof(buf), "%.0f км", t.tripKm);
-  u8g2.drawUTF8(2, 124, buf);
+  if (t.tripKm < 100.0f) snprintf(buf, sizeof(buf), "%.1fкм", t.tripKm);
+  else                   snprintf(buf, sizeof(buf), "%.0fкм", t.tripKm);
+  u8g2.drawUTF8(2, 127, buf);
 
-  snprintf(buf, sizeof(buf), "%d км/ч", (int)(t.maxSpeedKmh + 0.5f));
-  u8g2.drawUTF8(126 - u8g2.getUTF8Width(buf), 124, buf);
+  snprintf(buf, sizeof(buf), "%dкм/ч", (int)(t.maxSpeedKmh + 0.5f));
+  u8g2.drawUTF8(126 - u8g2.getUTF8Width(buf), 127, buf);
 
   // часы по центру нижней строки (UTC+3)
   if (t.clockShow && t.timeValid) {
     snprintf(buf, sizeof(buf), "%02d:%02d", t.clockH, t.clockM);
-    u8g2.drawUTF8(64 - u8g2.getUTF8Width(buf) / 2, 124, buf);
+    u8g2.drawUTF8(64 - u8g2.getUTF8Width(buf) / 2, 127, buf);
   }
 
   u8g2.sendBuffer();
@@ -276,7 +284,10 @@ void drawGps(const Telemetry& t) {
   u8g2.drawUTF8(64 - u8g2.getUTF8Width("GPS") / 2, 36, "GPS");
 
   u8g2.setFont(u8g2_font_6x13_t_cyrillic);
-  snprintf(buf, sizeof(buf), "Спутники  %d", t.sats);
+  if (t.snrAvg > 0)
+    snprintf(buf, sizeof(buf), "Спутники  %d (SNR %.0f)", t.sats, t.snrAvg);
+  else
+    snprintf(buf, sizeof(buf), "Спутники  %d", t.sats);
   u8g2.drawUTF8(4, 52, buf);
   snprintf(buf, sizeof(buf), "HDOP      %.1f", t.hdop);
   u8g2.drawUTF8(4, 64, buf);
@@ -369,9 +380,9 @@ void drawMenu(uint8_t cursor) {
 
 void drawConfirm(const char* question) {
   u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_9x15_t_cyrillic);
+  u8g2.setFont(u8g2_font_6x13_t_cyrillic);
   u8g2.drawUTF8(64 - u8g2.getUTF8Width(question) / 2, 56, question);
-  u8g2.drawUTF8(64 - u8g2.getUTF8Width("SET — да, BACK — нет") / 2, 78,
+  u8g2.drawUTF8(64 - u8g2.getUTF8Width("SET — да, BACK — нет") / 2, 74,
                 "SET — да, BACK — нет");
   u8g2.sendBuffer();
 }

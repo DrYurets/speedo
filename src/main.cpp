@@ -52,6 +52,8 @@ void loop() {
   tele.timeValid     = true;
   tele.clockH        = 21;
   tele.clockM        = 34;
+  tele.snrAvg        = 31;
+  tele.sigBars       = 4;
 #endif
 
   if (millis() - batT >= 1000) {

@@ -27,6 +27,9 @@ struct Telemetry {
   uint8_t  clockH      = 0;
   uint8_t  clockM      = 0;
   bool     timeValid   = false;
+  uint8_t  sigBars     = 0;   // уровень сигнала 0..5 (средний SNR из GSV)
+  float    snrAvg      = 0;   // средний SNR для экрана GPS
+  bool     isNight     = false; // солнце за горизонтом (автояркость/авто-HUD)
 
   // АКБ
   float    batV        = 0;
@@ -38,6 +41,8 @@ struct Telemetry {
   bool     barScale    = true;  // линейная шкала под цифрами (режим «цифры»)
   bool     clockShow   = true;  // часы внизу главного экрана
   bool     hudMode     = false; // HUD: только цифры скорости, зеркально
+  bool     autoBright  = true;  // приглушать экран ночью
+  bool     autoHud     = false; // включать HUD ночью автоматически
 
   // OTA
   bool     otaActive   = false;

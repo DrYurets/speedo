@@ -21,7 +21,7 @@ struct Button {
 };
 
 enum class BtnEvent : uint8_t { NONE, SHORT_MODE, SHORT_SET, SHORT_BACK,
-                                LONG_SET, LONG_BACK };
+                                LONG_MODE, LONG_SET, LONG_BACK };
 
 static Button bMode, bSet, bBack;
 
@@ -36,7 +36,8 @@ static uint8_t brightIdx  = 0;
 static uint32_t lastDraw  = 0;
 static uint32_t otaStartMs = 0;
 
-static const uint8_t CONTRASTS[] = {255, 192, 128, 64};
+// 10 уровней яркости: индекс 0 = самый яркий (уровень 10), 9 = 1
+static const uint8_t CONTRASTS[] = {255, 224, 192, 160, 128, 96, 64, 40, 24, 8};
 static const uint8_t CONTRAST_COUNT = sizeof(CONTRASTS);
 
 // Отработать кнопку; вернуть true при коротком нажатии, long через флаг
@@ -61,7 +62,11 @@ static BtnEvent pollButtons() {
   if (pollBtn(bMode, lg)) return BtnEvent::SHORT_MODE;
   if (pollBtn(bSet, lg))  return BtnEvent::SHORT_SET;
   if (pollBtn(bBack, lg)) return BtnEvent::SHORT_BACK;
-  // длинные SET и BACK — проверка удержания
+  // длинные нажатия — проверка удержания
+  if (!bMode.stableHigh && !bMode.longFired && millis() - bMode.pressedAt >= LONG_MS) {
+    bMode.longFired = true;
+    return BtnEvent::LONG_MODE;
+  }
   if (!bSet.stableHigh && !bSet.longFired && millis() - bSet.pressedAt >= LONG_MS) {
     bSet.longFired = true;
     return BtnEvent::LONG_SET;
@@ -106,12 +111,38 @@ static void odoEditEnter() {
   odoPos = 0;
 }
 
-static void hudToggle() {
-  tele.hudMode = !tele.hudMode;
-  menuSetHudLabel(tele.hudMode);
+static void hudSet(bool on) {
+  if (tele.hudMode == on) return;
+  tele.hudMode = on;
+  menuSetHudLabel(on);
   Preferences p;
   p.begin("speedo", false);
-  p.putBool("hud", tele.hudMode);
+  p.putBool("hud", on);
+  p.end();
+}
+
+static void hudToggle() { hudSet(!tele.hudMode); }
+
+// Долгое MODE: цикл цифры → цифры+шкала → стрелка
+static void viewCycle() {
+  if (tele.needleMode)   { tele.needleMode = false; tele.barScale = false; }
+  else if (tele.barScale) tele.needleMode = true;
+  else                    tele.barScale = true;
+  menuSetDialLabel(tele.needleMode);
+  menuSetBarLabel(tele.barScale);
+  Preferences p;
+  p.begin("speedo", false);
+  p.putBool("needle", tele.needleMode);
+  p.putBool("bar", tele.barScale);
+  p.end();
+}
+
+// NVS-переключатель булевой настройки
+static void prefToggle(const char* key, bool& flag) {
+  flag = !flag;
+  Preferences p;
+  p.begin("speedo", false);
+  p.putBool(key, flag);
   p.end();
 }
 
@@ -152,19 +183,34 @@ static void menuSelect() {
     case 5:  // HUD: зеркальные крупные цифры скорости
       hudToggle();
       break;
-    case 6: {  // интервал ТО: шаг 500, от 5000 до 15000, по кругу
+    case 6:  // авто-HUD ночью
+      prefToggle("ahud", tele.autoHud);
+      menuSetAutoHudLabel(tele.autoHud);
+      break;
+    case 7: {  // интервал ТО: шаг 500, от 5000 до 15000, по кругу
       uint16_t next = svcGetInterval() + 500;
       if (next > 15000 || next < 5000) next = 5000;
       svcSetInterval(next);
       menuSetSvcLabel(next);
       break;
     }
-    case 7: confirmAct = 3; mode = Mode::CONFIRM; break;
-    case 8:
+    case 8: confirmAct = 3; mode = Mode::CONFIRM; break;
+    case 9:
       brightIdx = (brightIdx + 1) % CONTRAST_COUNT;
       displayContrast(CONTRASTS[brightIdx]);
+      menuSetBrightLabel(CONTRAST_COUNT - brightIdx);
+      {
+        Preferences p;
+        p.begin("speedo", false);
+        p.putUChar("bright", brightIdx);
+        p.end();
+      }
       break;
-    case 9:
+    case 10:  // автояркость день/ночь
+      prefToggle("abright", tele.autoBright);
+      menuSetAutoBrightLabel(tele.autoBright);
+      break;
+    case 11:
       otaStart();
       otaStartMs = millis();
       mode = Mode::OTA;
@@ -177,6 +223,7 @@ static void handleEvent(BtnEvent e) {
   switch (mode) {
     case Mode::SCREENS:
       if (e == BtnEvent::SHORT_MODE) screenIdx = (screenIdx + 1) % 4;
+      else if (e == BtnEvent::LONG_MODE) viewCycle();  // цифры→+шкала→стрелка
       else if (e == BtnEvent::LONG_SET) { mode = Mode::MENU; menuCursor = 0; }
       else if (e == BtnEvent::LONG_BACK) hudToggle();  // проекция вкл/выкл
       break;
@@ -227,11 +274,19 @@ void uiInit() {
     tele.barScale   = p.getBool("bar", true);
     tele.clockShow  = p.getBool("clock", true);
     tele.hudMode    = p.getBool("hud", false);
+    tele.autoHud    = p.getBool("ahud", false);
+    tele.autoBright = p.getBool("abright", true);
+    brightIdx       = p.getUChar("bright", 0);
+    if (brightIdx >= CONTRAST_COUNT) brightIdx = 0;
+    displayContrast(CONTRASTS[brightIdx]);   // применить сохранённую
+    menuSetBrightLabel(CONTRAST_COUNT - brightIdx);
     p.end();
     menuSetDialLabel(tele.needleMode);
     menuSetBarLabel(tele.barScale);
     menuSetClockLabel(tele.clockShow);
     menuSetHudLabel(tele.hudMode);
+    menuSetAutoHudLabel(tele.autoHud);
+    menuSetAutoBrightLabel(tele.autoBright);
     menuSetSvcLabel(svcGetInterval());
   }
   bMode.pin = PIN_BTN_MODE;
@@ -245,6 +300,19 @@ void uiInit() {
 void uiTick() {
   BtnEvent e = pollButtons();
   if (e != BtnEvent::NONE) { handleEvent(e); render(); return; }
+
+  // раз в 30 с: автояркость и авто-HUD по высоте солнца
+  static uint32_t envT = 0;
+  static bool     lastNight = false;
+  if (millis() - envT >= 30000) {
+    envT = millis();
+    if (tele.autoBright)          // ночью приглушаем; днём — выбор «Яркость»
+      displayContrast(tele.isNight ? 8 : CONTRASTS[brightIdx]);
+    if (tele.autoHud && tele.isNight != lastNight) {
+      hudSet(tele.isNight);       // авто-HUD только на переходе день↔ночь
+    }
+    lastNight = tele.isNight;
+  }
 
   // авто-выход из режима OTA по таймауту
   if (mode == Mode::OTA && tele.otaActive &&
